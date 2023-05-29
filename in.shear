@@ -1,0 +1,77 @@
+# Apply shear to bottlebrush melt
+###################################################
+units lj
+atom_style full
+bond_style fene
+pair_style    lj/expand 2.5
+dimension 3
+boundary p p p
+neighbor 0.8 bin
+
+read_data      startProduction.data  # obtained at the end of melt creation
+read_dump      ConfEqui.dat 50000000
+change_box     all triclinic
+
+special_bonds fene
+bond_coeff * 30.0 1.5 1.0 1.0
+pair_coeff    * * 1.0 1.0 0.0   2.5
+
+####################################################
+
+variable	Temp equal 1.0
+variable	dt_integration equal 0.005
+timestep	${dt_integration}
+neighbor	0.3 bin
+neigh_modify delay 0 every 20 check no
+variable	Tdamping equal 100*${dt_integration}
+variable	shearRate equal 0.2
+variable 	maxStrain equal 100
+
+variable	steps equal ${maxStrain}/(${shearRate}*${dt_integration})
+variable	thermo_step equal ${steps}*0.001
+variable	bin_step equal ${steps}*0.1
+variable	dump_step equal ${steps}*0.01
+
+####################################################
+
+compute         myTemp all temp/deform
+compute         myPress all pressure myTemp
+
+fix shear1 all deform 1 xy erate ${shearRate} remap v
+fix nvt1 all nvt/sllod temp ${Temp} ${Temp} ${Tdamping}
+
+
+compute     stressA all stress/atom NULL
+compute     s4 all reduce sum c_stressA[4]
+
+####################################################
+
+thermo ${thermo_step}
+thermo_style custom step c_myTemp temp c_myPress press pe etotal vol enthalpy c_s4
+
+restart ${bin_step} Conf_*.bin
+
+dump mydump all custom ${dump_step} Conf_*.dat id type xu yu zu vx vy vz
+dump_modify mydump sort id
+
+reset_timestep 0
+run ${steps}
+
+write_data startSteady.data
+write_restart startSteady.bin 
+
+undump mydump
+reset_timestep 0
+
+# Steady state calculations
+
+thermo 2000
+thermo_style custom step c_myTemp temp c_myPress press pe etotal epair vol enthalpy c_s4
+
+variable step equal logfreq(1,9,10)
+dump mydumpSteady all custom 1 ConfSteady.dat id type xu yu zu vx vy vz
+dump_modify mydumpSteady every v_step first yes
+dump_modify mydumpSteady sort id
+
+reset_timestep 0
+run 2000000

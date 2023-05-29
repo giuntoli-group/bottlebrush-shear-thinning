@@ -1,0 +1,111 @@
+# Coarse-grained model for bottlebrushes
+###################################################
+units         lj
+atom_style    full
+dimension     3
+boundary p p p
+timestep 0.005
+
+### Interactions
+
+bond_style      fene
+special_bonds   fene
+pair_style soft 1.0
+read_data    start.data   # initial data file with packed chains
+
+### Coefficients
+
+pair_coeff * * 0.0
+variable prefactor equal ramp(0,300)
+fix rampSoft all adapt 1 pair soft a * * v_prefactor
+
+bond_coeff * 30.0 1.5 1.0 1.0
+
+### Variables
+
+variable runtime equal 1000000
+variable thermoT equal 1000
+variable Temp equal 1.0
+variable PressH equal 1.0
+variable Press equal 0.1
+variable velSeed equal 926458  
+######################
+
+velocity     all create ${Temp} ${velSeed}
+
+### Output
+thermo_style    custom step temp vol density press etotal pe ke epair ebond eangle
+thermo          ${thermoT}
+
+minimize 0.0 1.0e-8 1000 100000
+
+fix nvtSoft all nvt temp ${Temp} ${Temp} 0.5
+run 100000
+unfix nvtSoft
+unfix rampSoft
+reset_timestep 0
+
+write_data relaxed.data
+
+pair_style lj/expand 1.12246
+pair_coeff    * * 1.0 1.0  0.0   1.12246 # only repulsion in the beginning
+pair_coeff    1 * 1.0 1.0  0.0   1.12246
+
+fix noDrift all momentum 10 linear 1 1 1
+
+fix npt1 all npt temp ${Temp} ${Temp} 0.5 iso ${Press} ${PressH} 5.0 #gradual ramp to PressH
+run             ${runtime}
+
+unfix npt1
+
+# now the attraction is activated
+pair_coeff    * * 1.0 1.0  0.0   2.5 
+
+fix npt2 all npt temp ${Temp} ${Temp} 0.5 iso ${PressH} ${Press} 5.0
+run             ${runtime}
+
+unfix npt2
+fix npt3 all npt temp ${Temp} ${Temp} 0.5 iso ${Press} ${Press} 5.0
+
+variable stepEqui equal logfreq(1,9,10)
+dump mydumpEqui all custom 1 ConfEqui.dat id type xu yu zu vx vy vz
+dump_modify mydumpEqui every v_stepEqui first yes
+dump_modify mydumpEqui sort id
+
+run             50000000
+
+unfix noDrift
+undump mydumpEqui
+
+write_data startProduction.data
+write_restart startProduction.bin
+
+############################
+# Production
+############################
+
+unfix npt3
+reset_timestep 0
+
+fix npt4 all npt temp ${Temp} ${Temp} 0.5 iso ${Press} ${Press} 5.0
+
+compute stressA all stress/atom NULL
+
+# dump log trajectory
+variable step equal logfreq(1,9,10)
+dump mydump all custom 1 ConfLog.dat id type xu yu zu c_stressA[1] c_stressA[2] c_stressA[3]
+dump_modify mydump every v_step first yes
+dump_modify mydump sort id
+
+# dump linear trajectory
+dump mydumpLin all custom 100000 ConfLin.dat id type xu yu zu c_stressA[1] c_stressA[2] c_stressA[3]
+dump_modify mydumpLin sort id
+
+run 5000000
+
+undump mydump
+undump mydumpLin
+unfix npt4
+
+write_data endProduction.data
+write_restart endProduction.bin
